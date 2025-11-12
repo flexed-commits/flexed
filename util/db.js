@@ -1,11 +1,16 @@
 const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', 'hierarchy.json');
+// The single persistent data file for all configurations and user data
+const DB_PATH = path.join(__dirname, '..', 'data.json'); 
 
-// Ensure the JSON file exists
+// Ensure the JSON file exists with a base structure
 if (!fs.existsSync(DB_PATH)) {
-    fs.writeFileSync(DB_PATH, JSON.stringify({}));
+    fs.writeFileSync(DB_PATH, JSON.stringify({
+        hierarchy: {}, // Stores the role hierarchy (guildId: roleId[])
+        settings: {},  // Stores break/resign settings (guildId: {settings})
+        user_data: {}  // Stores resigned user's roles (userId: {data})
+    }, null, 2));
 }
 
 /**
@@ -18,7 +23,8 @@ function readDb() {
         return JSON.parse(data);
     } catch (error) {
         console.error("Error reading database file:", error);
-        return {};
+        // Return a default, empty structure on error to prevent crashes
+        return { hierarchy: {}, settings: {}, user_data: {} };
     }
 }
 
@@ -34,29 +40,69 @@ function writeDb(data) {
     }
 }
 
-/**
- * Gets the stored role hierarchy for a specific guild.
- * @param {string} guildId The ID of the guild.
- * @returns {Array<string>|null} An array of role IDs (lowest to highest), or null if not set.
- */
+// --- Hierarchy Functions (for Promote/Demote) ---
+
 function getHierarchyRoles(guildId) {
     const db = readDb();
-    // Roles are stored as an array of IDs, lowest index is lowest rank.
-    return db[guildId] || null;
+    return db.hierarchy[guildId] || null;
 }
 
-/**
- * Sets the role hierarchy for a specific guild.
- * @param {string} guildId The ID of the guild.
- * @param {Array<string>} roleIds An array of role IDs (lowest to highest).
- */
 function setHierarchyRoles(guildId, roleIds) {
     const db = readDb();
-    db[guildId] = roleIds;
+    db.hierarchy[guildId] = roleIds;
     writeDb(db);
 }
+
+// --- Break/Resign Settings Functions ---
+
+function getResignBreakSettings(guildId) {
+    const db = readDb();
+    return db.settings[guildId] || null;
+}
+
+function setResignBreakSettings(guildId, settings) {
+    const db = readDb();
+    db.settings[guildId] = settings;
+    writeDb(db);
+}
+
+// --- User Resignation Data Functions ---
+
+/**
+ * Saves a user's roles when they resign, along with the ID of the DM message 
+ * that contains the comeback button, allowing it to be disabled later.
+ */
+function saveUserHierarchyAndRoles(userId, rolesToSave, messageId, guildId) {
+    const db = readDb();
+    db.user_data[userId] = {
+        saved_roles: rolesToSave,
+        comeback_request_message_id: messageId,
+        resignation_timestamp: Date.now(),
+        guild_id: guildId // Store guild context for comeback
+    };
+    writeDb(db);
+}
+
+function getUserHierarchyAndRoles(userId) {
+    const db = readDb();
+    return db.user_data[userId] || null;
+}
+
+function deleteUserResignationData(userId) {
+    const db = readDb();
+    delete db.user_data[userId];
+    writeDb(db);
+}
+
 
 module.exports = {
     getHierarchyRoles,
     setHierarchyRoles,
+    
+    getResignBreakSettings,
+    setResignBreakSettings,
+    
+    saveUserHierarchyAndRoles,
+    getUserHierarchyAndRoles,
+    deleteUserResignationData
 };
