@@ -1,0 +1,21 @@
+{
+  "name": "discord-role-hierarchy-bot",
+  "version": "1.0.0",
+  "description": "A Discord bot for managing role hierarchies using discord.js v14+",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "discord",
+    "discord.js",
+    "bot",
+    "roles"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5"
+  }
+}
