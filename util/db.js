@@ -4,13 +4,15 @@ const path = require('path');
 // The single persistent data file for all configurations and user data
 const DB_PATH = path.join(__dirname, '..', 'data.json'); 
 
+const DEFAULT_DB_STRUCTURE = {
+    hierarchy: {},
+    settings: {},
+    user_data: {}
+};
+
 // Ensure the JSON file exists with a base structure
 if (!fs.existsSync(DB_PATH)) {
-    fs.writeFileSync(DB_PATH, JSON.stringify({
-        hierarchy: {}, // Stores the role hierarchy (guildId: roleId[])
-        settings: {},  // Stores break/resign settings (guildId: {settings})
-        user_data: {}  // Stores resigned user's roles (userId: {data})
-    }, null, 2));
+    fs.writeFileSync(DB_PATH, JSON.stringify(DEFAULT_DB_STRUCTURE, null, 2));
 }
 
 /**
@@ -20,11 +22,13 @@ if (!fs.existsSync(DB_PATH)) {
 function readDb() {
     try {
         const data = fs.readFileSync(DB_PATH, 'utf8');
+        // Handle empty file case or unexpected JSON
+        if (!data.trim()) return DEFAULT_DB_STRUCTURE;
         return JSON.parse(data);
     } catch (error) {
         console.error("Error reading database file:", error);
         // Return a default, empty structure on error to prevent crashes
-        return { hierarchy: {}, settings: {}, user_data: {} };
+        return DEFAULT_DB_STRUCTURE;
     }
 }
 
