@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { handleBreakAction, getSettingsOrReply } = require('../util/resignBreakLogic');
+const { handleBreakAction, getSettingsAndValidate } = require('../util/resignBreakLogic'); // **UPDATED FUNCTION NAME**
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -10,10 +10,11 @@ module.exports = {
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
-        const settings = await getSettingsOrReply(interaction.guildId, interaction);
+        // Use the corrected function name
+        const settings = await getSettingsAndValidate(interaction.guildId, interaction);
         if (!settings) return;
 
-        const result = await handleBreakAction(interaction.member, settings, interaction.guild);
+        const result = await handleBreakAction(interaction.member, settings, interaction.guild, interaction);
         await interaction.editReply(result);
     },
 
@@ -21,22 +22,21 @@ module.exports = {
     async buttonExecute(interaction) {
         await interaction.deferReply({ ephemeral: true }); 
 
-        const settings = await getSettingsOrReply(interaction.guildId, interaction);
+        // Use the corrected function name
+        const settings = await getSettingsAndValidate(interaction.guildId, interaction);
         if (!settings) return;
 
-        const result = await handleBreakAction(interaction.member, settings, interaction.guild);
+        const result = await handleBreakAction(interaction.member, settings, interaction.guild, interaction);
         await interaction.editReply(result);
     },
     
     // --- Prefix Command Execution ---
     async prefixExecute(message, args) {
-        // No admin check needed for self-service command
-        
-        const settings = await getSettingsOrReply(message.guildId, message);
+        // message is passed as 'source' for prefix commands
+        const settings = await getSettingsAndValidate(message.guildId, message);
         if (!settings) return;
         
-        // message.member is the user running the command
-        const result = await handleBreakAction(message.member, settings, message.guild);
+        const result = await handleBreakAction(message.member, settings, message.guild, message);
         await message.reply(result);
     }
 };
