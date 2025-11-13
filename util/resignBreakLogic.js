@@ -61,9 +61,31 @@ async function getSettingsAndValidate(guildId, source) {
  */
 function hasHierarchyRole(member, guildId) {
     const hierarchyIds = getHierarchyRoles(guildId);
-    if (!hierarchyIds || hierarchyIds.length === 0) return false;
     
-    return hierarchyIds.some(roleId => member.roles.cache.has(roleId));
+    console.log(`[HIERARCHY DEBUG] Checking hierarchy for guild ${guildId} and user ${member.id}`);
+    
+    if (!hierarchyIds || hierarchyIds.length === 0) {
+        console.log(`[HIERARCHY DEBUG] No hierarchy roles found for this guild in data.json.`);
+        // Note: You must run /role-hierarchy-setup first!
+        return false;
+    }
+    
+    console.log(`[HIERARCHY DEBUG] Saved Hierarchy Roles: ${hierarchyIds.join(', ')}`);
+    
+    // Convert member's roles to a Set for efficient lookup
+    const memberRoleIds = Array.from(member.roles.cache.keys());
+    
+    let hasMatch = false;
+    for (const roleId of hierarchyIds) {
+        if (member.roles.cache.has(roleId)) {
+            console.log(`[HIERARCHY DEBUG] Match found! Member has role ID ${roleId}`);
+            hasMatch = true;
+            break;
+        }
+    }
+
+    console.log(`[HIERARCHY DEBUG] Final Check Result: ${hasMatch}`);
+    return hasMatch;
 }
 
 
@@ -71,8 +93,10 @@ function hasHierarchyRole(member, guildId) {
  * Handles the "Break" action logic (giving break role, announcing, DMing).
  */
 async function handleBreakAction(member, settings, guild, source) {
-    const hierarchyCheck = hasHierarchyRole(member, guild.id);
+    console.log(`[ACTION DEBUG] Attempting break action for ${member.user.tag}`);
 
+    // HIERARCHY CHECK GATE
+    const hierarchyCheck = hasHierarchyRole(member, guild.id);
     if (!hierarchyCheck) {
         return `🚫 You must hold a rank role from the established hierarchy to use the break system.`;
     }
@@ -117,8 +141,10 @@ async function handleBreakAction(member, settings, guild, source) {
  * Handles the "Resign" action logic (removing hierarchy roles, giving resign role, saving roles, announcing).
  */
 async function handleResignAction(member, settings, guild, source) {
+    console.log(`[ACTION DEBUG] Attempting resign action for ${member.user.tag}`);
+    
+    // HIERARCHY CHECK GATE
     const hierarchyCheck = hasHierarchyRole(member, guild.id);
-
     if (!hierarchyCheck) {
         return `🚫 You must hold a rank role from the established hierarchy to use the resignation system.`;
     }
@@ -170,7 +196,6 @@ async function handleResignAction(member, settings, guild, source) {
         }
 
         // 4. Save roles to DB
-        // Pass the guildId here to contextually handle the comeback request later
         saveUserHierarchyAndRoles(member.id, rolesToSave, dmMessage ? dmMessage.id : null, guild.id);
 
         // 5. Announce in public channel
@@ -318,6 +343,7 @@ async function handleApproveComeback(interaction, settings) {
              const comebackEmbed = new EmbedBuilder()
                 .setColor(0x32CD32) // Lime Green
                 .setTitle('⬆️ Member Comeback')
+                // Required announcement message
                 .setDescription(`${targetMember} has come back to their previous role(s): **${roleMentions}**`)
                 .setTimestamp();
             await publicChannel.send({ embeds: [comebackEmbed] });
@@ -337,5 +363,5 @@ module.exports = {
     handleResignAction,
     handleComebackRequest,
     handleApproveComeback,
-    getSettingsAndValidate // Updated name to reflect validation
+    getSettingsAndValidate
 };
