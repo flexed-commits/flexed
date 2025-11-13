@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField, ChannelType } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField } = require('discord.js');
 const { getResignBreakSettings } = require('../util/db');
 
 module.exports = {
@@ -10,7 +10,7 @@ module.exports = {
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
-        // 1. Check if the system is configured (need settings for channel ID, etc.)
+        // 1. Check if the system is configured 
         const settings = getResignBreakSettings(interaction.guildId);
         if (!settings) {
              return interaction.editReply('The Resign/Break system is not configured. Please ask an administrator to use `/resign-and-break-setup` first.');
@@ -20,7 +20,7 @@ module.exports = {
         const embed = new EmbedBuilder()
             .setColor(0x0099FF)
             .setTitle('Breaks & Resignations')
-            .setDescription('If you want to take a break (≥7 Days) then click on the `Break` button below. And if you want to resign then click on the `Resign` button below.')
+            .setDescription('If you want to take a break (≥7 Days) then click on the `Break` button below. And if you want to resign then click on the `Resign` button below.\n\n**Note:** These buttons are active only for members who hold an established hierarchy rank.')
             .setAuthor({ 
                 name: 'Ψ.1nOnly.Ψ', 
                 url: 'https://discord.com/users/1081876265683927080', 
