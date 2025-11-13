@@ -2,61 +2,113 @@ const { getHierarchyRoles, getResignBreakSettings, saveUserHierarchyAndRoles, ge
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField } = require('discord.js');
 
 /**
- * Fetches required settings and checks if the system is configured.
+ * Checks if required settings exist and fetches the actual Guild objects.
+ * @param {string} guildId The ID of the guild.
+ * @param {object} source The Message or Interaction object for replying.
+ * @returns {Promise<object|null>} The enriched settings object or null if not configured/missing components.
  */
-async function getSettingsOrReply(guildId, source) {
+async function getSettingsAndValidate(guildId, source) {
     const settings = getResignBreakSettings(guildId);
     if (!settings) {
-        const isInteraction = 'isChatInputCommand' in source || 'isButton' in source;
         const msg = 'The Resign/Break system is not configured. Please ask an administrator to use `/resign-and-break-setup` first.';
-        
-        if (isInteraction) {
-            await (source.editReply ? source.editReply(msg) : source.reply({ content: msg, ephemeral: true }));
-        } else {
-            await source.reply(msg);
-        }
+        await (source.editReply ? source.editReply(msg) : source.reply({ content: msg, ephemeral: true }));
         return null;
     }
-    return settings;
+
+    const guild = source.guild || await source.client.guilds.fetch(guildId).catch(() => null);
+    if (!guild) return null; // Should not happen in command/button context
+
+    const missingComponents = [];
+    const enrichedSettings = { ...settings };
+
+    // Validate Roles
+    enrichedSettings.breakRole = guild.roles.cache.get(settings.break_role);
+    if (!enrichedSettings.breakRole) missingComponents.push({ type: 'Role', name: 'Break Role' });
+    
+    enrichedSettings.resignRole = guild.roles.cache.get(settings.resign_role);
+    if (!enrichedSettings.resignRole) missingComponents.push({ type: 'Role', name: 'Resign Role' });
+
+    // Validate Channels
+    enrichedSettings.publicChannel = guild.channels.cache.get(settings.break_resign_channel);
+    if (!enrichedSettings.publicChannel) missingComponents.push({ type: 'Channel', name: 'Breaks/Resign Channel', id: settings.break_resign_channel });
+    
+    enrichedSettings.adminChannel = guild.channels.cache.get(settings.admin_channel);
+    if (!enrichedSettings.adminChannel) missingComponents.push({ type: 'Channel', name: 'Admin Channel', id: settings.admin_channel });
+
+    if (missingComponents.length > 0) {
+        let replyMsg = '⚠️ **Configuration Error:** One or more components from the setup are missing from the server:\n';
+        missingComponents.forEach(comp => {
+            if (comp.id) {
+                 replyMsg += `\n- The ${comp.name} was found in the database but is missing from the server (ID: \`${comp.id}\`).`;
+            } else {
+                 replyMsg += `\n- The ${comp.name} is missing.`;
+            }
+        });
+        replyMsg += '\nPlease re-run `/resign-and-break-setup`.';
+        
+        await (source.editReply ? source.editReply(replyMsg) : source.reply({ content: replyMsg, ephemeral: true }));
+        return null;
+    }
+
+    return enrichedSettings;
 }
+
+/**
+ * Checks if the member has any role from the saved hierarchy.
+ * @param {GuildMember} member The member to check.
+ * @param {string} guildId The ID of the guild.
+ * @returns {boolean} True if the member has a hierarchy role, false otherwise.
+ */
+function hasHierarchyRole(member, guildId) {
+    const hierarchyIds = getHierarchyRoles(guildId);
+    if (!hierarchyIds || hierarchyIds.length === 0) return false;
+    
+    return hierarchyIds.some(roleId => member.roles.cache.has(roleId));
+}
+
 
 /**
  * Handles the "Break" action logic (giving break role, announcing, DMing).
  */
-async function handleBreakAction(member, settings, guild) {
-    const breakRole = guild.roles.cache.get(settings.break_role);
-    const publicChannel = guild.channels.cache.get(settings.break_resign_channel);
+async function handleBreakAction(member, settings, guild, source) {
+    const hierarchyCheck = hasHierarchyRole(member, guild.id);
 
-    if (!breakRole || !publicChannel) {
-        return `Error: Break role or public channel not found. Please re-run the setup command.`;
+    if (!hierarchyCheck) {
+        return `🚫 You must hold a rank role from the established hierarchy to use the break system.`;
     }
+
+    if (member.roles.cache.has(settings.breakRole.id)) {
+        return `🚫 You are already on break.`;
+    }
+
+    let dmStatus = "DM failed (User may have DMs closed).";
     
-    // Check if user is already on break
-    if (member.roles.cache.has(breakRole.id)) {
-        return `🚫 ${member.user.tag} is already on break.`;
-    }
-
     try {
-        await member.roles.add(breakRole, 'Member taking a break.');
+        await member.roles.add(settings.breakRole, 'Member taking a break.');
 
         // 1. DM the user
-        await member.send({
-            content: `👋 You have successfully been placed on break in **${guild.name}**. The **${breakRole.name}** role has been applied. We hope you have a refreshing time and look forward to your return!`
-        }).catch(() => console.log(`Could not DM ${member.user.tag}`));
+        try {
+            await member.send({
+                content: `👋 You have successfully been placed on break in **${guild.name}**. The **${settings.breakRole.name}** role has been applied. We hope you have a refreshing time and look forward to your return!`
+            });
+            dmStatus = "DM success.";
+        } catch (e) {
+            // DM failed, but role was applied. dmStatus remains "DM failed..."
+        }
 
         // 2. Announce in public channel
         const publicEmbed = new EmbedBuilder()
             .setColor(0xFFA500) // Orange
             .setTitle('⏳ Member Break')
-            .setDescription(`${member} has taken a break (≥7 days). We wish them well!`)
+            .setDescription(`${member} has taken a break (≥7 days). **DM Status: ${dmStatus}**`)
             .setTimestamp();
             
-        await publicChannel.send({ embeds: [publicEmbed] });
+        await settings.publicChannel.send({ embeds: [publicEmbed] });
         
-        return `✅ ${member.user.tag} is now on break. DM confirmation sent and announced.`;
+        return `✅ You are now on break. **DM Status: ${dmStatus}**`;
     } catch (error) {
         console.error('Error during break action:', error);
-        return `❌ An error occurred while trying to add the role or send the announcement. Check bot permissions.`;
+        return `❌ An error occurred while trying to apply the role. Check bot permissions.`;
     }
 }
 
@@ -64,20 +116,18 @@ async function handleBreakAction(member, settings, guild) {
 /**
  * Handles the "Resign" action logic (removing hierarchy roles, giving resign role, saving roles, announcing).
  */
-async function handleResignAction(member, settings, guild) {
-    const resignRole = guild.roles.cache.get(settings.resign_role);
-    const hierarchyIds = getHierarchyRoles(guild.id);
-    const publicChannel = guild.channels.cache.get(settings.break_resign_channel);
-    const adminChannel = guild.channels.cache.get(settings.admin_channel);
+async function handleResignAction(member, settings, guild, source) {
+    const hierarchyCheck = hasHierarchyRole(member, guild.id);
 
-    if (!resignRole || !publicChannel || !adminChannel) {
-        return `Error: One or more required roles/channels not found. Please re-run the setup command.`;
+    if (!hierarchyCheck) {
+        return `🚫 You must hold a rank role from the established hierarchy to use the resignation system.`;
     }
     
-    // Check if user is already resigned
-    if (member.roles.cache.has(resignRole.id)) {
-        return `🚫 ${member.user.tag} is already resigned.`;
+    if (member.roles.cache.has(settings.resignRole.id)) {
+        return `🚫 You are already resigned.`;
     }
+
+    const hierarchyIds = getHierarchyRoles(guild.id);
     
     // 1. Identify roles to save
     const rolesToSave = [];
@@ -89,46 +139,50 @@ async function handleResignAction(member, settings, guild) {
         }
     }
     
+    let dmStatus = "DM failed (User may have DMs closed, comeback request disabled).";
+
     // 2. Remove hierarchy roles and apply resign role
     try {
-        const rolesToRemove = rolesToSave; // Only remove the ones we found
+        const rolesToRemove = rolesToSave;
         if (rolesToRemove.length > 0) {
             await member.roles.remove(rolesToRemove, 'Member resigned: Removing hierarchy roles.');
         }
-        await member.roles.add(resignRole, 'Member resigned: Applying resign role.');
+        await member.roles.add(settings.resignRole, 'Member resigned: Applying resign role.');
         
-        // 3. Announce in public channel
-        const publicEmbed = new EmbedBuilder()
-            .setColor(0xDC143C) // Red
-            .setTitle('💔 Member Resignation')
-            .setDescription(`${member} has resigned. We thank them for their service!`)
-            .setTimestamp();
-            
-        await publicChannel.send({ embeds: [publicEmbed] });
+        let dmMessage = null;
         
-        // 4. DM the user with comeback button
+        // 3. DM the user with comeback button
         const comebackButton = new ButtonBuilder()
             .setCustomId('comeback_request')
-            .setLabel('Inform Comeback') // Changed label for better clarity
+            .setLabel('Inform Comeback')
             .setStyle(ButtonStyle.Primary);
             
         const row = new ActionRowBuilder().addComponents(comebackButton);
         
-        let dmMessage;
         try {
              dmMessage = await member.send({
-                content: `😭 You have successfully resigned from **${guild.name}**. The **${resignRole.name}** role has been applied, and your hierarchy roles have been removed.\n\nTo inform your comeback and request your previous roles restored, click the button below.`,
+                content: `😭 You have successfully resigned from **${guild.name}**. The **${settings.resignRole.name}** role has been applied, and your hierarchy roles have been removed.\n\nTo inform your comeback and request your previous roles restored, click the button below.`,
                 components: [row]
             });
+            dmStatus = "DM success (Comeback button sent).";
         } catch (e) {
-            console.log(`Could not DM ${member.user.tag}, skipping button disable feature.`);
+            // DM failed. dmMessage remains null.
         }
 
-        // 5. Save roles to DB
+        // 4. Save roles to DB
         // Pass the guildId here to contextually handle the comeback request later
         saveUserHierarchyAndRoles(member.id, rolesToSave, dmMessage ? dmMessage.id : null, guild.id);
+
+        // 5. Announce in public channel
+        const publicEmbed = new EmbedBuilder()
+            .setColor(0xDC143C) // Red
+            .setTitle('💔 Member Resignation')
+            .setDescription(`${member} has resigned. We thank them for their service! **DM Status: ${dmStatus}**`)
+            .setTimestamp();
+            
+        await settings.publicChannel.send({ embeds: [publicEmbed] });
         
-        return `✅ ${member.user.tag} has resigned. DM confirmation sent with comeback button.`;
+        return `✅ You have resigned. **DM Status: ${dmStatus}**`;
         
     } catch (error) {
         console.error('Error during resign action:', error);
@@ -141,8 +195,7 @@ async function handleResignAction(member, settings, guild) {
  * Handles the "Inform Comeback" button clicked by the user (sent in DM).
  */
 async function handleComebackRequest(interaction) {
-    // The user clicked this button in a DM, so guild context is missing.
-    // We must rely on the data saved in the DB.
+    // This logic relies entirely on the saved user data from the DB.
     
     const userData = getUserHierarchyAndRoles(interaction.user.id);
     
@@ -150,37 +203,35 @@ async function handleComebackRequest(interaction) {
          return interaction.reply({ content: 'Error: I cannot find your previous role data or server context. Please contact an admin directly.', ephemeral: true });
     }
     
-    // Fetch the guild based on the saved context
+    await interaction.deferReply({ ephemeral: true });
+
+    // Fetch the guild, settings, and channels to validate the request
     const guild = interaction.client.guilds.cache.get(userData.guild_id);
     if (!guild) {
-        return interaction.reply({ content: 'Error: I am no longer in the server you resigned from. Please contact an admin.', ephemeral: true });
+        return interaction.editReply('Error: I am no longer in the server you resigned from. Please contact an admin.');
     }
     
     const settings = getResignBreakSettings(userData.guild_id);
     if (!settings || !settings.admin_channel) {
-         return interaction.reply({ content: 'Error: Admin channel not configured in the server. Please contact an admin to check the setup.', ephemeral: true });
+         return interaction.editReply('Error: Admin channel not configured in the server. Please contact an admin to check the setup.');
     }
     
     const adminChannel = guild.channels.cache.get(settings.admin_channel);
     
     if (!adminChannel) {
-         return interaction.reply({ content: 'Error: Admin channel not found. It might have been deleted. Please contact an admin to check the setup.', ephemeral: true });
+         return interaction.editReply(`Error: The Admin Channel was found in the database but is missing from the server (ID: \`${settings.admin_channel}\`). Please contact an admin to fix the setup.`);
     }
     
-    await interaction.deferReply({ ephemeral: true });
-
     // 1. Disable the button in the user's DM
     const disabledRow = new ActionRowBuilder().addComponents(
         ButtonBuilder.from(interaction.component).setDisabled(true).setLabel('Comeback Requested')
     );
-    // Only attempt to edit if we saved a message ID
     if (userData.comeback_request_message_id) {
         await interaction.message.edit({ components: [disabledRow] }).catch(e => console.error("Could not disable comeback button:", e));
     }
     
     // 2. Send the approval request to the Admin Channel
     const approveButton = new ButtonBuilder()
-        // Use a unique ID to identify the action and the user
         .setCustomId(`approve_comeback_${interaction.user.id}`)
         .setLabel('Approve Comeback')
         .setStyle(ButtonStyle.Success);
@@ -208,14 +259,12 @@ async function handleComebackRequest(interaction) {
  * Handles the "Approve Comeback" button clicked by an administrator.
  */
 async function handleApproveComeback(interaction, settings) {
-    // 1. Admin Permission Check
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
         return interaction.reply({ content: 'You must be an administrator to approve a comeback.', ephemeral: true });
     }
     
     await interaction.deferReply({ ephemeral: true });
 
-    // 2. Extract target user ID from the custom ID
     const targetUserId = interaction.customId.split('_')[2];
     const guild = interaction.guild;
     
@@ -227,13 +276,16 @@ async function handleApproveComeback(interaction, settings) {
     }
 
     const userData = getUserHierarchyAndRoles(targetUserId);
-
     if (!userData) {
         return interaction.editReply(`Error: Role data for ${targetMember.user.tag} was not found. They might have been approved already or data was lost.`);
     }
-
+    
     const resignRole = guild.roles.cache.get(settings.resign_role);
     const rolesToRestore = userData.saved_roles;
+    const publicChannel = guild.channels.cache.get(settings.break_resign_channel);
+    
+    // Convert role IDs to mention string for announcement
+    const roleMentions = rolesToRestore.length > 0 ? rolesToRestore.map(id => `<@&${id}>`).join(', ') : 'None';
 
     // 3. Modify Roles
     try {
@@ -261,7 +313,17 @@ async function handleApproveComeback(interaction, settings) {
             content: `🎉 Your comeback request in **${guild.name}** has been approved by ${interaction.user.tag}! Your previous roles have been restored.`
         }).catch(() => console.log(`Could not DM ${targetMember.user.tag}`));
         
-        await interaction.editReply(`✅ Successfully approved comeback for **${targetMember.user.tag}**. Roles restored and user DMed.`);
+        // 6. Announce in public channel
+        if (publicChannel) {
+             const comebackEmbed = new EmbedBuilder()
+                .setColor(0x32CD32) // Lime Green
+                .setTitle('⬆️ Member Comeback')
+                .setDescription(`${targetMember} has come back to their previous role(s): **${roleMentions}**`)
+                .setTimestamp();
+            await publicChannel.send({ embeds: [comebackEmbed] });
+        }
+        
+        await interaction.editReply(`✅ Successfully approved comeback for **${targetMember.user.tag}**. Roles restored, public announcement sent, and user DMed.`);
         
     } catch (error) {
         console.error('Error during comeback approval:', error);
@@ -275,5 +337,5 @@ module.exports = {
     handleResignAction,
     handleComebackRequest,
     handleApproveComeback,
-    getSettingsOrReply
+    getSettingsAndValidate // Updated name to reflect validation
 };
