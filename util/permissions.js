@@ -1,5 +1,5 @@
 const { PermissionsBitField } = require('discord.js');
-const { readData } = require('./db'); // <-- Corrected import
+const { readData } = require('./db'); // <-- This is the required fix
 
 /**
  * Ensures the bot has necessary permissions in all channels and specifically in the setup channels.
@@ -16,7 +16,7 @@ async function setupChannelPermissions(guild, client) {
             return 'Failed to fetch bot member. Is the bot in the server?';
         }
 
-        // Use the correctly imported readData function
+        // The call to readData() which should now work
         const settings = await readData(); 
         const guildSettings = settings.resign_break_settings[guild.id];
 
