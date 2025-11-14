@@ -7,9 +7,12 @@ async function prefixExecute(message, args) {
 
 /**
  * Executes logic for button interactions.
+ * @param {Interaction} interaction The Discord interaction object.
+ * @param {Client} client The Discord client.
  */
 async function buttonExecute(interaction, client) {
-    // No more specialized buttons, just a default response.
+    // This is the clean handler: all buttons return a simple, safe, ephemeral response.
+    // This prevents errors like "sendBreakEmbed is not defined" from old buttons.
     await interaction.reply({ content: 'Button functionality is currently disabled or unrecognized.', ephemeral: true });
 }
 
