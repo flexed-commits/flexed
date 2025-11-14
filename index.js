@@ -2,7 +2,7 @@ const { Client, GatewayIntentBits, Partials, ActivityType, Collection, Permissio
 const fs = require('fs');
 const path = require('path');
 const { prefixExecute, buttonExecute } = require('./util/commandRunner');
-const { readData, isGuildSetup } = require('./util/db'); // Import DB utils to check settings
+const { readData, isGuildSetup } = require('./util/db'); // <-- CORRECTED IMPORT
 
 // Load environment variables from .env file
 require('dotenv').config();
@@ -61,6 +61,7 @@ async function setupChannelPermissions(guild) {
         return;
     }
 
+    // Use the correctly imported readData function
     const settings = await readData();
     const guildSettings = settings.resign_break_settings[guild.id];
 
@@ -83,9 +84,7 @@ async function setupChannelPermissions(guild) {
             });
             console.log(`[PERMS] Set ViewChannel for bot in: #${channel.name}`);
         } catch (error) {
-            // This often fails for channels the bot cannot see, like Voice or specific categories
-            // If the bot cannot see the channel, it's usually because it lacks permissions
-            // console.error(`[PERMS] Failed to set ViewChannel for #${channel.name}:`, error.message);
+            // We ignore errors here as it might be trying to access restricted channels
         }
     }
     console.log('[PERMS] Finished granting bot ViewChannel permissions.');
@@ -115,6 +114,7 @@ async function setupChannelPermissions(guild) {
                     continue;
                 }
                 
+                // Set the minimum required permissions
                 await channel.permissionOverwrites.edit(botMember.id, {
                     [PermissionsBitField.Flags.ViewChannel]: true,
                     [PermissionsBitField.Flags.SendMessages]: true,
