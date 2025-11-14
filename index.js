@@ -72,16 +72,18 @@ function updatePresence(memberCount) {
 client.once('ready', async () => {
     console.log(`Bot is ready! Logged in as ${client.user.tag}`);
     
-    // 1. Set Initial Presence
-    const guild = client.guilds.cache.get(TARGET_GUILD_ID);
+    // Attempt to fetch the guild to ensure it's in the cache
+    const guild = await client.guilds.fetch(TARGET_GUILD_ID).catch(() => null);
+    
     let memberCount = '';
 
     if (guild) {
+        console.log(`Target Guild found: ${guild.name}`);
         try {
             await guild.members.fetch(); // Ensure member cache is full
             memberCount = guild.memberCount.toLocaleString();
         } catch (error) {
-            console.error('Failed to fetch guild members for status:', error);
+            console.error('Failed to fetch guild members for status (Check permissions):', error);
         }
     } else {
         console.error(`Target Guild ID ${TARGET_GUILD_ID} not found in bot's guilds.`);
@@ -99,12 +101,15 @@ client.once('ready', async () => {
     }, 3600000); // 1 hour
 
     // 3. Register Slash Commands
-    const commandsData = client.commands.map(command => command.data.toJSON());
-    try {
-        await client.application.commands.set(commandsData, TARGET_GUILD_ID);
-        console.log(`Successfully registered ${commandsData.length} slash commands to guild ${TARGET_GUILD_ID}.`);
-    } catch (error) {
-        console.error("Failed to register slash commands:", error);
+    if (guild) {
+        const commandsData = client.commands.map(command => command.data.toJSON());
+        try {
+            // Note: If this still fails, your bot needs "application.commands" scope and "Administrator" permission
+            await client.application.commands.set(commandsData, TARGET_GUILD_ID);
+            console.log(`Successfully registered ${commandsData.length} slash commands to guild ${TARGET_GUILD_ID}.`);
+        } catch (error) {
+            console.error("Failed to register slash commands:", error);
+        }
     }
 });
 
@@ -121,7 +126,7 @@ client.on('guildCreate', async guild => {
     }
 });
 
-// Handle Slash Commands
+// Handle Slash Commands and Buttons
 client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand()) {
         const command = interaction.client.commands.get(interaction.commandName);
