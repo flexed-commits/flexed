@@ -1,5 +1,5 @@
 const { PermissionsBitField } = require('discord.js');
-const { readData } = require('./db');
+const { readData } = require('./db'); // <-- Corrected import
 
 /**
  * Ensures the bot has necessary permissions in all channels and specifically in the setup channels.
@@ -17,7 +17,7 @@ async function setupChannelPermissions(guild, client) {
         }
 
         // Use the correctly imported readData function
-        const settings = await readData();
+        const settings = await readData(); 
         const guildSettings = settings.resign_break_settings[guild.id];
 
         // 1. Grant View Channel Permission in ALL Channels
@@ -50,15 +50,6 @@ async function setupChannelPermissions(guild, client) {
         // 2. Set Specific Permissions for Setup Channels
         let specificChannelReport = '';
         if (guildSettings) {
-            const requiredChannelPerms = [
-                PermissionsBitField.Flags.ViewChannel,
-                PermissionsBitField.Flags.SendMessages,
-                PermissionsBitField.Flags.EmbedLinks,
-                PermissionsBitField.Flags.AddReactions,
-                PermissionsBitField.Flags.ReadMessageHistory,
-                PermissionsBitField.Flags.ManageRoles // Essential for the hierarchy and break/resign features
-            ];
-
             const channelMap = {
                 'Break/Resign Channel': guildSettings.break_resign_channel,
                 'Public Announce Channel': guildSettings.public_announce_channel,
