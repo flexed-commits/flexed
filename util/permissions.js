@@ -2,7 +2,7 @@ const { PermissionsBitField } = require('discord.js');
 const { readData } = require('./db'); 
 
 /**
- * Ensures the bot has necessary permissions in all channels and specifically in the setup channels.
+ * Ensures the bot has necessary permissions in all channels and removes @everyone pings.
  * @param {Guild} guild The target guild object.
  * @param {Client} client The bot client instance.
  * @returns {Promise<string>} A status message indicating success or failure.
@@ -18,9 +18,6 @@ async function setupChannelPermissions(guild, client) {
             return 'Failed to fetch bot member. Is the bot in the server?';
         }
 
-        const settings = await readData(); 
-        const guildSettings = settings.resign_break_settings[guild.id];
-        
         let report = '';
 
         // --- GLOBAL CHANNEL CONFIGURATION (Applies to all channels) ---
@@ -32,7 +29,7 @@ async function setupChannelPermissions(guild, client) {
             if (!channel || channel.deleted) continue;
             
             try {
-                // 1. Grant critical bot permissions globally
+                // 1. Grant critical bot permissions globally (View, Send, Embeds, Attachments, Reactions)
                 await channel.permissionOverwrites.edit(botMember.id, {
                     [PermissionsBitField.Flags.ViewChannel]: true,     // MUST VIEW
                     [PermissionsBitField.Flags.SendMessages]: true,    // MUST SEND MESSAGES
@@ -49,51 +46,15 @@ async function setupChannelPermissions(guild, client) {
             } catch (error) {
                 // Log fatal error if we can't manage permissions
                 if (error.code === 50013) {
-                    report += `\n❌ FATAL ERROR: Missing permissions to manage channels in #${channel.name}. Bot role is too low!`;
-                    console.error(`[PERMS] FATAL ERROR: Missing permissions to manage channels in #${channel.name}. Bot role is too low!`);
+                    report += `\n❌ FATAL ERROR: Missing permissions to manage channel overwrites in #${channel.name}. Bot role is too low!`;
+                    console.error(`[PERMS] FATAL ERROR: Missing permissions to manage channel overwrites in #${channel.name}. Bot role is too low!`);
                 }
-                // Ignore other errors (like restricted channel types)
             }
         }
         report += '\n✅ **Global rules applied:** Bot has R/W/Embed/React/Attach access everywhere. @everyone pings are disabled everywhere.';
-
-        // --- SPECIFIC CHANNEL CONFIGURATION (Management channels) ---
-        let specificChannelReport = '';
-        if (guildSettings) {
-            const channelMap = {
-                'Break/Resign Channel': guildSettings.break_resign_channel,
-                'Public Announce Channel': guildSettings.public_announce_channel,
-                'Admin Channel': guildSettings.admin_channel,
-            };
-
-            for (const [name, channelId] of Object.entries(channelMap)) {
-                try {
-                    const channel = await guild.channels.fetch(channelId);
-                    if (!channel) {
-                        specificChannelReport += `\n⚠️ Configured ${name} (${channelId}) not found.`;
-                        continue;
-                    }
-                    
-                    // Re-assert critical permissions, especially ManageRoles
-                    await channel.permissionOverwrites.edit(botMember.id, {
-                        [PermissionsBitField.Flags.ViewChannel]: true,
-                        [PermissionsBitField.Flags.SendMessages]: true,
-                        [PermissionsBitField.Flags.EmbedLinks]: true,
-                        [PermissionsBitField.Flags.ManageRoles]: true, // Essential for role handling
-                    });
-                    specificChannelReport += `\n✅ Set necessary R/W/Role permissions for bot in ${name}: #${channel.name}`;
-
-                } catch (error) {
-                    specificChannelReport += `\n❌ ERROR setting permissions for ${name}. Check bot role position.`;
-                    console.error(`[PERMS] ERROR setting permissions for ${name}:`, error.message);
-                }
-            }
-        } else {
-            specificChannelReport = '\n⚠️ Resign/Break settings not found. Specific channel perms skipped.';
-        }
         
         console.log('[PERMS] Channel permission setup complete.');
-        return `**Permission check and setup complete!**\n\n${report}\n${specificChannelReport}\n\n**If any errors occurred (❌), please ensure the bot's highest role is above all other roles in the Server Settings.**`;
+        return `**Permission check and setup complete!**\n\n${report}\n\n**If any errors occurred (❌), please ensure the bot's highest role is above all other roles in the Server Settings.**`;
 
     } catch (error) {
         console.error('Fatal error during permission setup:', error);
