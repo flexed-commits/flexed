@@ -1,86 +1,131 @@
-// Discord.js v14 Bot Client Setup
-require('dotenv').config();
+const { Client, GatewayIntentBits, Partials, ActivityType, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const { Client, IntentsBitField, Collection, REST, Routes, PermissionsBitField } = require('discord.js');
-const { getResignBreakSettings } = require('./util/db');
-const { handleComebackRequest, handleApproveComeback } = require('./util/resignBreakLogic');
+const { prefixExecute, buttonExecute } = require('./util/commandRunner');
 
-// Define the bot's prefix
-const PREFIX = '!';
+// Load environment variables from .env file
+require('dotenv').config();
 
+// --- Configuration ---
+const TOKEN = process.env.DISCORD_TOKEN;
+const PREFIX = '!'; 
+const TARGET_GUILD_ID = '1349281907765936188'; // The server ID to stay in
+
+// Initialize Client
 const client = new Client({
     intents: [
-        // Required for reading messages and prefix commands
-        IntentsBitField.Flags.GuildMessages,
-        IntentsBitField.Flags.MessageContent,
-        // Required for interactions (slash commands, buttons) and guild information
-        IntentsBitField.Flags.Guilds,
-        // Required for managing roles (promote/demote, break/resign)
-        IntentsBitField.Flags.GuildMembers,
-        // Required for DMs
-        IntentsBitField.Flags.DirectMessages,
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.MessageContent,
     ],
-    partials: ['CHANNEL'], // Required for receiving DMs
+    partials: [Partials.Channel, Partials.Message],
 });
 
 client.commands = new Collection();
-const commands = []; // Array for storing slash command data for registration
+client.prefixCommands = new Collection();
+
+// --- Command Loading ---
 
 const commandsPath = path.join(__dirname, 'commands');
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 
-// Load command files dynamically
-try {
-    const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+for (const file of commandFiles) {
+    const filePath = path.join(commandsPath, file);
+    const command = require(filePath);
 
-    for (const file of commandFiles) {
-        const filePath = path.join(commandsPath, file);
-        const command = require(filePath);
-        
-        // Ensure command structure is valid
-        if ('data' in command && 'execute' in command) {
-            client.commands.set(command.data.name, command);
-            commands.push(command.data.toJSON());
-        } else {
-            console.warn(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
-        }
+    // Set a new item in the Collection with the key as the command name and the value as the exported module
+    if ('data' in command && 'execute' in command) {
+        client.commands.set(command.data.name, command);
     }
-} catch (error) {
-    console.error("Could not load commands folder. Ensure './commands' directory exists.", error);
+    
+    // Also store for prefix handling if prefixExecute is present
+    if (command.prefixExecute) {
+        client.prefixCommands.set(command.data.name, command);
+    }
 }
 
+// --- Status and Presence Update Function ---
 
-// --- SLASH COMMAND REGISTRATION ---
-client.on('ready', () => {
-    console.log(`Logged in as ${client.user.tag}!`);
+/**
+ * Sets the bot's custom activity/presence.
+ * @param {string} memberCount The member count to display in the status.
+ */
+function updatePresence(memberCount) {
+    const activityName = memberCount 
+        ? `Watching Shivam’s Discord | ${memberCount} Members` 
+        : `Watching Shivam’s Discord`;
+        
+    client.user.setPresence({
+        activities: [{ 
+            name: activityName, 
+            type: ActivityType.Watching 
+        }],
+        status: 'online',
+    });
+    console.log(`Presence updated: ${activityName}`);
+}
 
-    const CLIENT_ID = client.user.id;
-    const REST_CLIENT = new REST().setToken(process.env.DISCORD_TOKEN);
+// --- Events ---
 
-    // Register commands globally
-    (async () => {
+client.once('ready', async () => {
+    console.log(`Bot is ready! Logged in as ${client.user.tag}`);
+    
+    // 1. Set Initial Presence
+    const guild = client.guilds.cache.get(TARGET_GUILD_ID);
+    let memberCount = '';
+
+    if (guild) {
         try {
-            console.log(`Started refreshing ${commands.length} application (/) commands.`);
-
-            const data = await REST_CLIENT.put(
-                Routes.applicationCommands(CLIENT_ID),
-                { body: commands },
-            );
-
-            console.log(`Successfully reloaded ${data.length} application (/) commands.`);
+            await guild.members.fetch(); // Ensure member cache is full
+            memberCount = guild.memberCount.toLocaleString();
         } catch (error) {
-            console.error(error);
+            console.error('Failed to fetch guild members for status:', error);
         }
-    })();
+    } else {
+        console.error(`Target Guild ID ${TARGET_GUILD_ID} not found in bot's guilds.`);
+    }
+
+    updatePresence(memberCount);
+
+    // 2. Set Interval to Update Presence (e.g., every hour)
+    setInterval(async () => {
+        if (guild) {
+            await guild.members.fetch();
+            const newMemberCount = guild.memberCount.toLocaleString();
+            updatePresence(newMemberCount);
+        }
+    }, 3600000); // 1 hour
+
+    // 3. Register Slash Commands
+    const commandsData = client.commands.map(command => command.data.toJSON());
+    try {
+        await client.application.commands.set(commandsData, TARGET_GUILD_ID);
+        console.log(`Successfully registered ${commandsData.length} slash commands to guild ${TARGET_GUILD_ID}.`);
+    } catch (error) {
+        console.error("Failed to register slash commands:", error);
+    }
 });
 
+// Enforce single-server presence
+client.on('guildCreate', async guild => {
+    if (guild.id !== TARGET_GUILD_ID) {
+        console.log(`Joined unauthorized guild: ${guild.name} (${guild.id}). Leaving...`);
+        try {
+            await guild.leave();
+            console.log(`Successfully left guild ${guild.name}.`);
+        } catch (error) {
+            console.error(`Failed to leave guild ${guild.name}:`, error);
+        }
+    }
+});
 
-// --- INTERACTION HANDLER (Slash Commands & Buttons) ---
-
+// Handle Slash Commands
 client.on('interactionCreate', async interaction => {
-    // Handle Chat Input Commands (Slash Commands)
     if (interaction.isChatInputCommand()) {
-        const command = client.commands.get(interaction.commandName);
+        const command = interaction.client.commands.get(interaction.commandName);
+
         if (!command) {
             console.error(`No command matching ${interaction.commandName} was found.`);
             return;
@@ -89,91 +134,39 @@ client.on('interactionCreate', async interaction => {
         try {
             await command.execute(interaction);
         } catch (error) {
-            console.error(error);
-            const errorMessage = 'There was an error while executing this command!';
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({ content: errorMessage, ephemeral: true });
+            console.error(`Error executing command ${interaction.commandName}:`, error);
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply({ content: 'There was an error while executing this command!', ephemeral: true }).catch(() => {});
             } else {
-                await interaction.reply({ content: errorMessage, ephemeral: true });
+                await interaction.reply({ content: 'There was an error while executing this command!', ephemeral: true }).catch(() => {});
             }
         }
     } 
     
     // Handle Button Interactions
-    else if (interaction.isButton()) {
-        // Ensure we have a guild, which is required for all these actions
-        if (!interaction.guild && !interaction.customId.startsWith('comeback_request')) {
-            return interaction.reply({ content: 'This action must be performed within a server.', ephemeral: true });
-        }
-        
-        const customId = interaction.customId;
-        const settings = getResignBreakSettings(interaction.guildId);
-
-        if (customId === 'break_button' || customId === 'resign_button') {
-            const command = client.commands.get(customId === 'break_button' ? 'break' : 'resign');
-            
-            // We use the same command execute logic, but pass the interaction type
-            if (command && 'buttonExecute' in command) {
-                 try {
-                    // buttonExecute will handle the deferring/replying
-                    await command.buttonExecute(interaction);
-                 } catch (error) {
-                    console.error(error);
-                    interaction.reply({ content: 'There was an error processing your request.', ephemeral: true });
-                 }
-            }
-        } else if (customId === 'comeback_request') {
-             // This button is always in a DM, so guildId is null. We need to fetch settings from a known guild or handle without.
-             // For simplicity, we assume the user is only in one server using this bot, or they use the same settings.
-             // The resignation process is tied to the guildId (server). Since we can't reliably get the guildId from a DM button interaction, 
-             // the logic uses the saved data tied to the user. We assume the client can fetch the guild from the settings inside the logic.
-             // But for the simple structure, we must pass the settings object which only contains settings for ONE guild.
-             // A true multi-guild bot would require the user to specify the guild in the DM, or store guild context in user_data.
-             
-             // Since we can't reliably get guildId from DM: we pass a null settings and let the logic handle finding data.
-             await handleComebackRequest(interaction, settings);
-             
-        } else if (customId.startsWith('approve_comeback_')) {
-            if (settings) {
-                await handleApproveComeback(interaction, settings);
-            } else {
-                 await interaction.reply({ content: 'The system is not configured. Please contact an admin.', ephemeral: true });
-            }
-        }
+    if (interaction.isButton()) {
+        await buttonExecute(interaction, client);
     }
 });
 
-// --- MESSAGE HANDLER (Prefix Commands) ---
-
+// Handle Prefix Commands
 client.on('messageCreate', async message => {
-    // Ignore bots or messages without the prefix
     if (!message.content.startsWith(PREFIX) || message.author.bot || !message.guild) return;
 
-    // Remove prefix and split the message content into command and arguments
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const commandName = args.shift().toLowerCase();
+    
+    const command = message.client.prefixCommands.get(commandName);
 
-    // Find the command object
-    const command = client.commands.get(commandName);
-
-    // If a command exists and has a custom 'prefixExecute' handler 
-    if (command && 'prefixExecute' in command) {
-         // Check permissions (e.g., if the command requires administrative rights)
-        // Only check for admin if it's NOT a self-service command like break or resign
-        if (commandName !== 'break' && commandName !== 'resign' && !message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            return message.reply({ content: 'You need the Administrator permission to run this command.', ephemeral: true });
-        }
-
-        try {
-            // Pass the message object and arguments to the command's prefix handler
-            await command.prefixExecute(message, args);
-        } catch (error) {
-            console.error(error);
-            message.reply('There was an error trying to execute that command!');
-        }
+    if (!command) return;
+    
+    try {
+        await command.prefixExecute(message, args);
+    } catch (error) {
+        console.error(`Error executing prefix command ${commandName}:`, error);
+        await message.reply('There was an error while executing this command!').catch(() => {});
     }
 });
 
-
-// Login to Discord
-client.login(process.env.DISCORD_TOKEN);
+// Log in to Discord with your client's token
+client.login(TOKEN);
