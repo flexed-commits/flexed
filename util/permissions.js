@@ -18,7 +18,6 @@ async function setupChannelPermissions(guild, client) {
             return 'Failed to fetch bot member. Is the bot in the server?';
         }
 
-        // The critical call to readData() which should now work
         const settings = await readData(); 
         const guildSettings = settings.resign_break_settings[guild.id];
         
