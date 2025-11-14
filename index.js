@@ -103,6 +103,7 @@ client.once('ready', async () => {
         // 3. Register Slash Commands
         const commandsData = client.commands.map(command => command.data.toJSON());
         try {
+            // Note: We use .set() with the guild ID to quickly register new commands.
             await client.application.commands.set(commandsData, TARGET_GUILD_ID);
             console.log(`Successfully registered ${commandsData.length} slash commands to guild ${TARGET_GUILD_ID}.`);
         } catch (error) {
@@ -146,7 +147,7 @@ client.on('interactionCreate', async interaction => {
         }
     } 
     
-    // Handle Button Interactions
+    // Handle Button Interactions - This calls the clean commandRunner utility
     if (interaction.isButton()) {
         await buttonExecute(interaction, client);
     }
