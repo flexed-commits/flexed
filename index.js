@@ -1,7 +1,8 @@
-const { Client, GatewayIntentBits, Partials, ActivityType, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActivityType, Collection, PermissionsBitField } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const { prefixExecute, buttonExecute } = require('./util/commandRunner');
+const { readData, isGuildSetup } = require('./util/db'); // Import DB utils to check settings
 
 // Load environment variables from .env file
 require('dotenv').config();
@@ -46,6 +47,92 @@ for (const file of commandFiles) {
     }
 }
 
+// --- Permissions Setup Function ---
+
+/**
+ * Ensures the bot has necessary permissions in all channels and specifically in the setup channels.
+ * @param {Guild} guild The target guild object.
+ */
+async function setupChannelPermissions(guild) {
+    console.log('[PERMS] Starting channel permission setup...');
+    const botMember = await guild.members.fetch(client.user.id);
+    if (!botMember) {
+        console.error('[PERMS] Failed to fetch bot member.');
+        return;
+    }
+
+    const settings = await readData();
+    const guildSettings = settings.resign_break_settings[guild.id];
+
+    // 1. Grant View Channel Permission in ALL Channels
+    console.log('[PERMS] Granting bot ViewChannel permissions across all channels...');
+    const channels = await guild.channels.fetch();
+
+    for (const [id, channel] of channels) {
+        if (!channel || channel.deleted) continue;
+        
+        try {
+            // Check current permissions to avoid unnecessary updates
+            const currentPerms = channel.permissionsFor(botMember);
+            if (!currentPerms || currentPerms.has(PermissionsBitField.Flags.ViewChannel)) {
+                continue;
+            }
+
+            await channel.permissionOverwrites.edit(botMember.id, {
+                [PermissionsBitField.Flags.ViewChannel]: true,
+            });
+            console.log(`[PERMS] Set ViewChannel for bot in: #${channel.name}`);
+        } catch (error) {
+            // This often fails for channels the bot cannot see, like Voice or specific categories
+            // If the bot cannot see the channel, it's usually because it lacks permissions
+            // console.error(`[PERMS] Failed to set ViewChannel for #${channel.name}:`, error.message);
+        }
+    }
+    console.log('[PERMS] Finished granting bot ViewChannel permissions.');
+
+    // 2. Set Specific Permissions for Setup Channels
+    if (guildSettings) {
+        const requiredChannelPerms = [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.EmbedLinks,
+            PermissionsBitField.Flags.AddReactions,
+            PermissionsBitField.Flags.ReadMessageHistory,
+            PermissionsBitField.Flags.ManageRoles // Necessary for handling promotion/demotion/breaks etc.
+        ];
+
+        const channelMap = {
+            'Break/Resign Channel': guildSettings.break_resign_channel,
+            'Public Announce Channel': guildSettings.public_announce_channel,
+            'Admin Channel': guildSettings.admin_channel,
+        };
+
+        for (const [name, channelId] of Object.entries(channelMap)) {
+            try {
+                const channel = await guild.channels.fetch(channelId);
+                if (!channel) {
+                    console.warn(`[PERMS] Configured ${name} (${channelId}) not found. Skipping.`);
+                    continue;
+                }
+                
+                await channel.permissionOverwrites.edit(botMember.id, {
+                    [PermissionsBitField.Flags.ViewChannel]: true,
+                    [PermissionsBitField.Flags.SendMessages]: true,
+                    [PermissionsBitField.Flags.EmbedLinks]: true,
+                });
+                console.log(`[PERMS] Set necessary R/W permissions for bot in ${name}: #${channel.name}`);
+
+            } catch (error) {
+                console.error(`[PERMS] ERROR setting permissions for ${name}:`, error.message);
+            }
+        }
+    } else {
+        console.warn('[PERMS] Resign/Break settings not found in database. Skipping specific channel perms.');
+    }
+    console.log('[PERMS] Channel permission setup complete.');
+}
+
+
 // --- Status and Presence Update Function ---
 
 /**
@@ -80,31 +167,33 @@ client.once('ready', async () => {
     if (guild) {
         console.log(`Target Guild found: ${guild.name}`);
         try {
+            // Run permissions setup FIRST
+            await setupChannelPermissions(guild);
+
             await guild.members.fetch(); // Ensure member cache is full
             memberCount = guild.memberCount.toLocaleString();
+
         } catch (error) {
-            console.error('Failed to fetch guild members for status (Check permissions):', error);
+            console.error('Failed to fetch guild members or run permissions setup (Check bot permissions and role hierarchy position):', error);
         }
     } else {
-        console.error(`Target Guild ID ${TARGET_GUILD_ID} not found in bot's guilds.`);
+        console.error(`Target Guild ID ${TARGET_GUILD_ID} not found in bot's guilds. Make sure the bot is invited.`);
     }
 
     updatePresence(memberCount);
 
     // 2. Set Interval to Update Presence (e.g., every hour)
-    setInterval(async () => {
-        if (guild) {
+    // Only run if the guild was found
+    if (guild) {
+        setInterval(async () => {
             await guild.members.fetch();
             const newMemberCount = guild.memberCount.toLocaleString();
             updatePresence(newMemberCount);
-        }
-    }, 3600000); // 1 hour
+        }, 3600000); // 1 hour
 
-    // 3. Register Slash Commands
-    if (guild) {
+        // 3. Register Slash Commands
         const commandsData = client.commands.map(command => command.data.toJSON());
         try {
-            // Note: If this still fails, your bot needs "application.commands" scope and "Administrator" permission
             await client.application.commands.set(commandsData, TARGET_GUILD_ID);
             console.log(`Successfully registered ${commandsData.length} slash commands to guild ${TARGET_GUILD_ID}.`);
         } catch (error) {
