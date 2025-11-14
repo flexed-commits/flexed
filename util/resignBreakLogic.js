@@ -62,30 +62,12 @@ async function getSettingsAndValidate(guildId, source) {
 function hasHierarchyRole(member, guildId) {
     const hierarchyIds = getHierarchyRoles(guildId);
     
-    console.log(`[HIERARCHY DEBUG] Checking hierarchy for guild ${guildId} and user ${member.id}`);
-    
     if (!hierarchyIds || hierarchyIds.length === 0) {
-        console.log(`[HIERARCHY DEBUG] No hierarchy roles found for this guild in data.json.`);
-        // Note: You must run /role-hierarchy-setup first!
         return false;
     }
     
-    console.log(`[HIERARCHY DEBUG] Saved Hierarchy Roles: ${hierarchyIds.join(', ')}`);
-    
-    // Convert member's roles to a Set for efficient lookup
-    const memberRoleIds = Array.from(member.roles.cache.keys());
-    
-    let hasMatch = false;
-    for (const roleId of hierarchyIds) {
-        if (member.roles.cache.has(roleId)) {
-            console.log(`[HIERARCHY DEBUG] Match found! Member has role ID ${roleId}`);
-            hasMatch = true;
-            break;
-        }
-    }
-
-    console.log(`[HIERARCHY DEBUG] Final Check Result: ${hasMatch}`);
-    return hasMatch;
+    // Check if the member has any role that is in the hierarchy list
+    return hierarchyIds.some(roleId => member.roles.cache.has(roleId));
 }
 
 
@@ -93,10 +75,9 @@ function hasHierarchyRole(member, guildId) {
  * Handles the "Break" action logic (giving break role, announcing, DMing).
  */
 async function handleBreakAction(member, settings, guild, source) {
-    console.log(`[ACTION DEBUG] Attempting break action for ${member.user.tag}`);
-
     // HIERARCHY CHECK GATE
     const hierarchyCheck = hasHierarchyRole(member, guild.id);
+
     if (!hierarchyCheck) {
         return `🚫 You must hold a rank role from the established hierarchy to use the break system.`;
     }
@@ -113,7 +94,7 @@ async function handleBreakAction(member, settings, guild, source) {
         // 1. DM the user
         try {
             await member.send({
-                content: `👋 You have successfully been placed on break in **${guild.name}**. The **${settings.breakRole.name}** role has been applied. We hope you have a refreshing time and look forward to your return!`
+                content: `👋 You're officially on break in **${guild.name}**. The **${settings.breakRole.name}** role has been added. Have a great time, we'll see you soon!`
             });
             dmStatus = "DM success.";
         } catch (e) {
@@ -124,15 +105,15 @@ async function handleBreakAction(member, settings, guild, source) {
         const publicEmbed = new EmbedBuilder()
             .setColor(0xFFA500) // Orange
             .setTitle('⏳ Member Break')
-            .setDescription(`${member} has taken a break (≥7 days). **DM Status: ${dmStatus}**`)
+            .setDescription(`${member} has stepped away for a break (≥7 days). **DM Status: ${dmStatus}**`)
             .setTimestamp();
             
         await settings.publicChannel.send({ embeds: [publicEmbed] });
         
-        return `✅ You are now on break. **DM Status: ${dmStatus}**`;
+        return `✅ You're now on break. **DM Status: ${dmStatus}**`;
     } catch (error) {
         console.error('Error during break action:', error);
-        return `❌ An error occurred while trying to apply the role. Check bot permissions.`;
+        return `❌ Something went wrong trying to give you the role. Check bot permissions.`;
     }
 }
 
@@ -141,29 +122,29 @@ async function handleBreakAction(member, settings, guild, source) {
  * Handles the "Resign" action logic (removing hierarchy roles, giving resign role, saving roles, announcing).
  */
 async function handleResignAction(member, settings, guild, source) {
-    console.log(`[ACTION DEBUG] Attempting resign action for ${member.user.tag}`);
     
     // HIERARCHY CHECK GATE
     const hierarchyCheck = hasHierarchyRole(member, guild.id);
     if (!hierarchyCheck) {
-        return `🚫 You must hold a rank role from the established hierarchy to use the resignation system.`;
+        return `🚫 You must hold a rank role from the established hierarchy to resign.`;
     }
     
     if (member.roles.cache.has(settings.resignRole.id)) {
-        return `🚫 You are already resigned.`;
+        return `🚫 You are already marked as resigned.`;
     }
 
     const hierarchyIds = getHierarchyRoles(guild.id);
     
-    // 1. Identify roles to save
-    const rolesToSave = [];
+    // 1. Identify roles to save (Use a Set to automatically prevent duplicates)
+    const rolesToSaveSet = new Set();
     if (hierarchyIds) {
         for (const roleId of hierarchyIds) {
             if (member.roles.cache.has(roleId)) {
-                rolesToSave.push(roleId);
+                rolesToSaveSet.add(roleId);
             }
         }
     }
+    const rolesToSave = Array.from(rolesToSaveSet); // Convert Set back to Array
     
     let dmStatus = "DM failed (User may have DMs closed, comeback request disabled).";
 
@@ -187,7 +168,7 @@ async function handleResignAction(member, settings, guild, source) {
         
         try {
              dmMessage = await member.send({
-                content: `😭 You have successfully resigned from **${guild.name}**. The **${settings.resignRole.name}** role has been applied, and your hierarchy roles have been removed.\n\nTo inform your comeback and request your previous roles restored, click the button below.`,
+                content: `😭 You've successfully resigned from **${guild.name}**. Your rank roles were removed and the **${settings.resignRole.name}** role was applied.\n\nTo request your previous roles back, click the button below.`,
                 components: [row]
             });
             dmStatus = "DM success (Comeback button sent).";
@@ -202,16 +183,16 @@ async function handleResignAction(member, settings, guild, source) {
         const publicEmbed = new EmbedBuilder()
             .setColor(0xDC143C) // Red
             .setTitle('💔 Member Resignation')
-            .setDescription(`${member} has resigned. We thank them for their service! **DM Status: ${dmStatus}**`)
+            .setDescription(`${member} has resigned. We wish them the best! **DM Status: ${dmStatus}**`)
             .setTimestamp();
             
         await settings.publicChannel.send({ embeds: [publicEmbed] });
         
-        return `✅ You have resigned. **DM Status: ${dmStatus}**`;
+        return `✅ You've resigned. **DM Status: ${dmStatus}**`;
         
     } catch (error) {
         console.error('Error during resign action:', error);
-        return `❌ An error occurred while trying to manage roles or send the announcement. Check bot permissions.`;
+        return `❌ Something went wrong while managing roles or sending the announcement. Check bot permissions.`;
     }
 }
 
@@ -225,7 +206,7 @@ async function handleComebackRequest(interaction) {
     const userData = getUserHierarchyAndRoles(interaction.user.id);
     
     if (!userData || !userData.guild_id) {
-         return interaction.reply({ content: 'Error: I cannot find your previous role data or server context. Please contact an admin directly.', ephemeral: true });
+         return interaction.reply({ content: 'Error: Cannot find your previous role data or server context. Please contact an admin directly.', ephemeral: true });
     }
     
     await interaction.deferReply({ ephemeral: true });
@@ -266,7 +247,7 @@ async function handleComebackRequest(interaction) {
     const adminEmbed = new EmbedBuilder()
         .setColor(0x00FF00) // Green
         .setTitle('⬆️ Comeback Request')
-        .setDescription(`**${interaction.user.tag}** (${interaction.user.id}) has requested to return to staff/rank structure in **${guild.name}**.`)
+        .setDescription(`**${interaction.user.tag}** (${interaction.user.id}) has requested to return to rank structure in **${guild.name}**.`)
         .addFields(
             { name: 'Previous Roles Saved', value: userData.saved_roles.length > 0 ? userData.saved_roles.map(id => `<@&${id}>`).join(', ') : 'None', inline: false },
             { name: 'Action', value: 'Click the button below to restore their roles and remove the resign role.', inline: false }
@@ -335,7 +316,7 @@ async function handleApproveComeback(interaction, settings) {
         
         // 5. DM the user about approval
         await targetMember.send({
-            content: `🎉 Your comeback request in **${guild.name}** has been approved by ${interaction.user.tag}! Your previous roles have been restored.`
+            content: `🎉 Your comeback request in **${guild.name}** was approved by ${interaction.user.tag}! Your previous roles are back.`
         }).catch(() => console.log(`Could not DM ${targetMember.user.tag}`));
         
         // 6. Announce in public channel
@@ -349,11 +330,11 @@ async function handleApproveComeback(interaction, settings) {
             await publicChannel.send({ embeds: [comebackEmbed] });
         }
         
-        await interaction.editReply(`✅ Successfully approved comeback for **${targetMember.user.tag}**. Roles restored, public announcement sent, and user DMed.`);
+        await interaction.editReply(`✅ Successfully approved comeback for **${targetMember.user.tag}**. Roles restored, announcement sent, and user DMed.`);
         
     } catch (error) {
         console.error('Error during comeback approval:', error);
-        return interaction.editReply(`❌ An error occurred while managing roles for comeback. Check bot permissions. Error: ${error.message}`);
+        return interaction.editReply(`❌ Something went wrong while restoring roles. Check bot permissions. Error: ${error.message}`);
     }
 }
 
