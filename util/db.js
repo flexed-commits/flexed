@@ -1,112 +1,56 @@
 const fs = require('fs');
 const path = require('path');
 
-// The single persistent data file for all configurations and user data
-const DB_PATH = path.join(__dirname, '..', 'data.json'); 
-
-const DEFAULT_DB_STRUCTURE = {
-    hierarchy: {},
-    settings: {},
-    user_data: {}
-};
-
-// Ensure the JSON file exists with a base structure
-if (!fs.existsSync(DB_PATH)) {
-    fs.writeFileSync(DB_PATH, JSON.stringify(DEFAULT_DB_STRUCTURE, null, 2));
-}
+const DB_FILE = path.join(__dirname, '..', 'data.json');
 
 /**
- * Reads the entire database state from the JSON file.
- * @returns {object} The database object.
+ * Reads data from the JSON file.
+ * @returns {Promise<Object>} The parsed data object.
  */
-function readDb() {
+async function readData() {
     try {
-        const data = fs.readFileSync(DB_PATH, 'utf8');
-        // Handle empty file case or unexpected JSON
-        if (!data.trim()) return DEFAULT_DB_STRUCTURE;
+        if (!fs.existsSync(DB_FILE)) {
+            console.warn(`[DB] Database file not found at ${DB_FILE}. Creating empty structure.`);
+            return {
+                hierarchy: {},
+                resign_break_settings: {},
+                user_resignation_data: {}
+            };
+        }
+        const data = fs.readFileSync(DB_FILE, 'utf8');
         return JSON.parse(data);
     } catch (error) {
-        console.error("Error reading database file:", error);
-        // Return a default, empty structure on error to prevent crashes
-        return DEFAULT_DB_STRUCTURE;
+        console.error(`[DB] Error reading database file: ${error.message}. Returning empty object.`);
+        return {
+            hierarchy: {},
+            resign_break_settings: {},
+            user_resignation_data: {}
+        };
     }
 }
 
 /**
- * Writes the entire database state to the JSON file.
- * @param {object} data The database object to write.
+ * Writes data to the JSON file.
+ * @param {Object} data The data object to write.
  */
-function writeDb(data) {
+async function writeData(data) {
     try {
-        fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8');
+        const json = JSON.stringify(data, null, 2);
+        fs.writeFileSync(DB_FILE, json, 'utf8');
     } catch (error) {
-        console.error("Error writing database file:", error);
+        console.error(`[DB] Error writing to database file: ${error.message}`);
     }
 }
 
-// --- Hierarchy Functions (for Promote/Demote) ---
-
-function getHierarchyRoles(guildId) {
-    const db = readDb();
-    return db.hierarchy[guildId] || null;
-}
-
-function setHierarchyRoles(guildId, roleIds) {
-    const db = readDb();
-    db.hierarchy[guildId] = roleIds;
-    writeDb(db);
-}
-
-// --- Break/Resign Settings Functions ---
-
-function getResignBreakSettings(guildId) {
-    const db = readDb();
-    return db.settings[guildId] || null;
-}
-
-function setResignBreakSettings(guildId, settings) {
-    const db = readDb();
-    db.settings[guildId] = settings;
-    writeDb(db);
-}
-
-// --- User Resignation Data Functions ---
-
 /**
- * Saves a user's roles when they resign, along with the ID of the DM message 
- * that contains the comeback button, allowing it to be disabled later.
+ * Checks if a specific guild has the basic resignation/break settings configured.
+ * @param {string} guildId The ID of the guild.
+ * @returns {Promise<boolean>} True if settings exist, false otherwise.
  */
-function saveUserHierarchyAndRoles(userId, rolesToSave, messageId, guildId) {
-    const db = readDb();
-    db.user_data[userId] = {
-        saved_roles: rolesToSave,
-        comeback_request_message_id: messageId,
-        resignation_timestamp: Date.now(),
-        guild_id: guildId // Store guild context for comeback
-    };
-    writeDb(db);
+async function isGuildSetup(guildId) {
+    const data = await readData();
+    const settings = data.resign_break_settings[guildId];
+    return !!settings && !!settings.break_role && !!settings.resign_role && !!settings.break_resign_channel;
 }
 
-function getUserHierarchyAndRoles(userId) {
-    const db = readDb();
-    return db.user_data[userId] || null;
-}
-
-function deleteUserResignationData(userId) {
-    const db = readDb();
-    delete db.user_data[userId];
-    writeDb(db);
-}
-
-
-module.exports = {
-    getHierarchyRoles,
-    setHierarchyRoles,
-    
-    getResignBreakSettings,
-    setResignBreakSettings,
-    
-    saveUserHierarchyAndRoles,
-    getUserHierarchyAndRoles,
-    deleteUserResignationData
-};
+module.exports = { readData, writeData, isGuildSetup };
